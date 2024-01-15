@@ -9,6 +9,13 @@
 		"ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {},
 		"ghcr.io/devcontainers/features/terraform:1": {},
 		"ghcr.io/rio/features/kustomize:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-kubernetes-tools.vscode-aks-tools"
+			]
+		}
 	}
 
 	// Features to add to the dev container. More info: https://containers.dev/features.

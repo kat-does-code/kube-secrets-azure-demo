@@ -10,7 +10,12 @@ variable "tenant_id" {
 
 variable "client_id" {
   type        = string
-  description = "ID of the service principal used to deploy with."
+  description = "ID of the service principal used to deploy with. Used for deployment."
+}
+
+variable "principal_id" {
+  type = string
+  description = "Principal ID of the service principal used to deploy with. Used for role assignments."
 }
 
 variable "client_secret" {
@@ -24,3 +29,7 @@ variable "resource_group_name" {
   description = "Name of the resource group to deploy in. Must be an existing resource group."
 }
 
+variable "kube_api_server_allowed_ip" {
+  type = string
+  description = "Your IP address or the outgoing IP address of your deployment server. Used for Kubernetes API server IP whitelisting."
+}

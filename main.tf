@@ -1,5 +1,5 @@
 locals {
-  container_registry_name = "${substr(trim(data.azurerm_resource_group.example.name, "_()-."), 0, 30)}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
+  container_registry_name = "${lower(substr(replace(data.azurerm_resource_group.example.name, "-", ""), 0, 30))}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
   vm_size                 = "Standard_D2_v2"
 
   tags = merge({
@@ -50,14 +50,13 @@ resource "azurerm_kubernetes_cluster" "main" {
     type = "SystemAssigned"
   }
 
-  key_management_service {
-    key_vault_key_id         = azurerm_key_vault.aks-mounted.id
-    key_vault_network_access = "Public"
-  }
-
   key_vault_secrets_provider {
     secret_rotation_enabled  = true
     secret_rotation_interval = "2m"
+  }
+
+  api_server_access_profile {
+    authorized_ip_ranges = [var.kube_api_server_allowed_ip]
   }
 
   tags = local.tags
@@ -81,8 +80,9 @@ resource "azurerm_key_vault" "aks-mounted" {
   //
   // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
 
-  name     = "akv-mount-aks"
-  sku_name = "standard"
+  name                      = "akv-mount-aks"
+  sku_name                  = "standard"
+  enable_rbac_authorization = true
 
   tenant_id           = var.tenant_id
   location            = data.azurerm_resource_group.example.location
@@ -115,6 +115,18 @@ resource "azurerm_role_assignment" "kubelet-secrets_user" {
   skip_service_principal_aad_check = true
 }
 
+resource "azurerm_role_assignment" "terraform-secrets_officer" {
+  // The service principal for terraform is granted access to the specified key vault and can read+write secrets. 
+  //
+  // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
+
+  name                             = uuidv5("url", "terraform.principal.secrets_user.roleassignment")
+  principal_id                     = var.principal_id
+  role_definition_name             = "Key Vault Secrets Officer"
+  scope                            = azurerm_key_vault.aks-mounted.id
+  skip_service_principal_aad_check = true
+}
+
 // Container registry
 resource "azurerm_container_registry" "main" {
   // This azure container registry will be connected to our AKS cluster.
@@ -142,32 +154,30 @@ resource "azurerm_role_assignment" "kubelet-acrpull" {
 }
 
 provider "kubernetes" {
-    experiments {
-      manifest_resource = true
-    }
+  experiments {
+    manifest_resource = true
+  }
   host                   = azurerm_kubernetes_cluster.main.kube_admin_config.0.host
-  client_key             = azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key
-  client_certificate     = azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate
-  cluster_ca_certificate = azurerm_kubernetes_cluster.main.kube_admin_config.0.cluster_ca_certificate
+  client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key)
+  client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate)
+  cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.cluster_ca_certificate)
   username               = azurerm_kubernetes_cluster.main.kube_admin_config.0.username
   password               = azurerm_kubernetes_cluster.main.kube_admin_config.0.password
 }
 
 provider "kubectl" {
   host                   = azurerm_kubernetes_cluster.main.kube_admin_config.0.host
-  client_key             = azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key
-  client_certificate     = azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate
-  cluster_ca_certificate = azurerm_kubernetes_cluster.main.kube_admin_config.0.cluster_ca_certificate
+  client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key)
+  client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate)
+  cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.cluster_ca_certificate)
   username               = azurerm_kubernetes_cluster.main.kube_admin_config.0.username
   password               = azurerm_kubernetes_cluster.main.kube_admin_config.0.password
-  
 }
 
-resource "kubectl_manifest" "secrets_provider_class_keyvault" {
-    provider = kubectl
+resource "kubernetes_manifest" "secrets_provider_class_keyvault" {
   manifest = {
     apiVersion = "secrets-store.csi.x-k8s.io/v1"
-    kind       = "SecretsProviderClass"
+    kind       = "SecretProviderClass"
     metadata = {
       name      = "akv-mount-aks-msi"
       namespace = "default"
@@ -175,69 +185,80 @@ resource "kubectl_manifest" "secrets_provider_class_keyvault" {
     spec = {
       provider = "azure"
       parameters = {
-        usePodIdentity : "false"
-        useVMManagedIdentity : "true"                                                                                                     # Set to true for using managed identity
-        userAssignedIdentityID : azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.user_assigned_identity_id # Set the clientID of the user-assigned managed identity to use
-        keyvaultName : azurerm_key_vault.aks-mounted.name                                                                                 # Set to the name of your key vault
-        cloudName : ""                                                                                                                    # [OPTIONAL for Azure] if not provided, the Azure environment defaults to AzurePublicCloud
-        objects = {
-          array = [
-            {
-              objectName = azurerm_key_vault_secret.test-secret.name
-              objectType = "secret" # object types: secret, key, or cert
-              //objectVersion = "" # [OPTIONAL] object versions, default to latest if empty
-            },
-            {
-              objectName = azurerm_key_vault_secret.test-another-secret.name
-              objectType = "secret"
-            }
-          ]
-        }
-        tenantId : var.tenant_id # The tenant ID of the key vault
+        usePodIdentity = "false"
+        useVMManagedIdentity = "true"                                                                                                     # Set to true for using managed identity
+        userAssignedIdentityID = azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.client_id # Set the clientID of the user-assigned managed identity to use
+        keyvaultName = azurerm_key_vault.aks-mounted.name                                                                                 # Set to the name of your key vault
+        cloudName = ""                                                                                                                    # [OPTIONAL for Azure] if not provided, the Azure environment defaults to AzurePublicCloud
+        objects = <<EOT
+          array:
+            - |
+              objectName: ${azurerm_key_vault_secret.test-secret.name}
+              objectType: "secret" # object types: secret, key, or cert
+            - |
+              objectName: ${azurerm_key_vault_secret.test-another-secret.name}
+              objectType: "secret"
+            EOT
+          
+        tenantId = var.tenant_id # The tenant ID of the key vault
       }
     }
   }
 }
 
-resource "kubernetes_pod" "secrets-tester" {
-    provider = kubernetes
-  depends_on = [ kubectl_manifest.secrets_provider_class_keyvault ]
+resource "kubernetes_deployment" "secrets-tester" {
+  provider   = kubernetes
+  depends_on = [kubernetes_manifest.secrets_provider_class_keyvault]
   metadata {
-    name      = "secrets-tester"
+    name      = "secrets-tester-deploy"
     namespace = "default"
   }
   spec {
-    container {
-      image   = "busybox"
-      name    = "busybox"
-      command = ["/bin/sh", "-c", "touch /tmp/healthy; sleep 30; rm -f /tmp/healthy; sleep 600"]
-      volume_mount {
-        name       = "secrets-store-inline"
-        mount_path = "/mnt/secrets-store"
-        read_only  = true
-      }
-      liveness_probe {
-        exec {
-          command = ["cat", "/tmp/healthy"]
-        }
-        initial_delay_seconds = 5
-        period_seconds        = 5
-      }
-      readiness_probe {
-        exec {
-          command = ["cat", "/mnt/secrets-store"]
-        }
-        initial_delay_seconds = 30
-        period_seconds        = 5
+    selector {
+      match_labels = {
+        "app" = "secrets-tester"
       }
     }
-    volume {
-      name = "secrets-store-inline"
-      csi {
-        driver    = "secrets-store.csi.k8s.io"
-        read_only = true
-        volume_attributes = {
-          "secretProviderClass" = "akv-mount-aks-msi"
+    template {
+      metadata {
+        name      = "secrets-tester"
+        namespace = "default"
+        labels    = { "app" = "secrets-tester" }
+      }
+      spec {
+        container {
+          image   = "busybox"
+          name    = "busybox"
+          command = ["/bin/sh", "-c", "touch /tmp/healthy; sleep 30; rm -f /tmp/healthy; sleep 600"]
+          volume_mount {
+            name       = "secrets-store-inline"
+            mount_path = "/mnt/secrets-store"
+            read_only  = true
+          }
+          liveness_probe {
+            exec {
+              command = ["cat", "/tmp/healthy"]
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+          }
+          readiness_probe {
+            exec {
+              command = ["ls", "/mnt/secrets-store/"]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 5
+          }
+        }
+        volume {
+          name = "secrets-store-inline"
+          csi {
+            driver    = "secrets-store.csi.k8s.io"
+            read_only = true
+            volume_attributes = {
+              "secretProviderClass" = "akv-mount-aks-msi"
+            }
+          }
         }
       }
     }
