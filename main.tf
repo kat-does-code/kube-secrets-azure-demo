@@ -173,6 +173,10 @@ resource "azurerm_container_registry_task" "build" {
     events         = ["commit"]
     source_type    = "Github"
     branch         = local.source_code_branch
+    authentication {
+      token = var.github_pat
+      token_type = "PAT"
+    }
   }
 
   docker_step {
