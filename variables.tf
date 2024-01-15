@@ -33,3 +33,9 @@ variable "kube_api_server_allowed_ip" {
   type = string
   description = "Your IP address or the outgoing IP address of your deployment server. Used for Kubernetes API server IP whitelisting."
 }
+
+variable "github_pat" {
+  sensitive = true
+  type = string
+  description = "Personal Access Token for GitHub. Used to run container registry tasks."
+}

@@ -18,7 +18,9 @@ resource "random_string" "acr_name_postfix" {
   upper   = false
 }
 
+// ------------------
 // Kubernetes Cluster
+// ------------------
 resource "azurerm_kubernetes_cluster" "main" {
   // Any and all identities used for managing the cluster and its components will be automatically
   // created by Azure. Role based access control is enabled, so we can control each identity's 
@@ -72,8 +74,9 @@ resource "azurerm_kubernetes_cluster_node_pool" "user-pool" {
   tags = local.tags
 }
 
-
+// ---------
 // Key Vault
+// ---------
 resource "azurerm_key_vault" "aks-mounted" {
   // This key vault will be mounted to our AKS cluster. We'll mount this using Secrets Store 
   // CSI drivers. More information can be found on the following page:
@@ -127,7 +130,9 @@ resource "azurerm_role_assignment" "terraform-secrets_officer" {
   skip_service_principal_aad_check = true
 }
 
-// Container registry
+## ------------------
+## Container registry 
+## ------------------ 
 resource "azurerm_container_registry" "main" {
   // This azure container registry will be connected to our AKS cluster.
 
@@ -153,6 +158,24 @@ resource "azurerm_role_assignment" "kubelet-acrpull" {
   skip_service_principal_aad_check = true
 }
 
+resource "azurerm_container_registry_task" "build" {
+  name = "build-test-image"
+  container_registry_id = azurerm_container_registry.main.id
+  platform {
+    os = "Linux"
+  }
+
+  docker_step {
+    dockerfile_path      = "Dockerfile"
+    context_path         = "https://github.com/kat-does-code/kube-secrets-azure-demo#main:build"
+    context_access_token = var.github_pat
+    image_names          = ["helloworld:{{.Run.ID}}", "helloworld:latest"]
+  }
+}
+
+// ---------------------
+// Kubernetes deployment
+// ---------------------
 provider "kubernetes" {
   experiments {
     manifest_resource = true
@@ -205,6 +228,7 @@ resource "kubernetes_manifest" "secrets_provider_class_keyvault" {
     }
   }
 }
+
 
 resource "kubernetes_deployment" "secrets-tester" {
   provider   = kubernetes
