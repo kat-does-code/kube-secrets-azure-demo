@@ -183,14 +183,12 @@ resource "azurerm_container_registry_scope_map" "main" {
   container_registry_name = azurerm_container_registry.main.name
   actions = [
     "repositories/${local.source_code_branch}/content/read",
-    "repositories/${local.source_code_branch}/content/write",
-    "repositories/${local.source_code_branch}/metadata/read",
-    "repositories/${local.source_code_branch}/metadata/write"
+    "repositories/${local.source_code_branch}/metadata/read"
   ]
 }
 
 resource "azurerm_container_registry_token" "primary" {
-  name                    = "${local.source_code_branch}-reg-token"
+  name                    = "${azurerm_container_registry_scope_map.main.name}-token"
   resource_group_name     = data.azurerm_resource_group.example.name
   scope_map_id            = azurerm_container_registry_scope_map.main.id
   container_registry_name = azurerm_container_registry.main.name
@@ -198,10 +196,6 @@ resource "azurerm_container_registry_token" "primary" {
 
 resource "time_offset" "password_validity_time" {
   offset_days = 30
-
-  lifecycle {
-    replace_triggered_by = [ null_resource.always_run ]
-  }
 }
 
 resource "azurerm_container_registry_token_password" "primary" {
@@ -218,7 +212,7 @@ resource "azurerm_role_assignment" "kubelet-acrpull" {
   // https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration
 
   name                             = uuidv5("url", "kubelet.principal.acrpull.roleassignment")
-  principal_id                     = azurerm_kubernetes_cluster.main.identity[0].principal_id
+  principal_id                     = // Get from *-nodes resource group (-agentpool identity)
   role_definition_name             = "AcrPull"
   scope                            = azurerm_container_registry.main.id
   skip_service_principal_aad_check = true
@@ -324,7 +318,6 @@ resource "kubernetes_deployment" "deploy" {
         image_pull_secrets {
           name = kubernetes_secret.image_pull_secret.metadata.0.name
         }
-
         container {
           image   = "${azurerm_container_registry.main.login_server}/${local.docker_image_name}:latest"
           name    = local.kube_deployment_app_name
@@ -361,5 +354,9 @@ resource "kubernetes_deployment" "deploy" {
         }
       }
     }
+  }
+
+  timeouts {
+    create = "2m"
   }
 }
