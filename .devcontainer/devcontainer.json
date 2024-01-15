@@ -16,7 +16,10 @@
 				"ms-kubernetes-tools.vscode-aks-tools"
 			]
 		}
-	}
+	},
+
+	// Fixes xdg-open bug with kubernetes extension 
+	"postCreateCommand": "sudo apt update -y && sudo apt install xdg-utils -y"
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},

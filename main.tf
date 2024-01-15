@@ -1,8 +1,10 @@
 locals {
   source_code_repository_url = "https://github.com/kat-does-code/kube-secrets-azure-demo"
   source_code_branch         = "main"
+  docker_image_name          = "helloworld"
   container_registry_name    = "${lower(substr(replace(data.azurerm_resource_group.example.name, "-", ""), 0, 30))}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
   vm_size                    = "Standard_D2_v2"
+  kube_deployment_app_name  = "secrets-tester"
 
   tags = merge({
     Environment = "Development"
@@ -147,18 +149,6 @@ resource "azurerm_container_registry" "main" {
   tags = local.tags
 }
 
-resource "azurerm_role_assignment" "kubelet-acrpull" {
-  // This role assignment 'connects' AKS and ACR. It works by granting AcrPull role on the 
-  // Kubelet identity in Azure. For more information, refer to the page below:
-  // 
-  // https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration
-
-  name                             = uuidv5("url", "kubelet.principal.acrpull.roleassignment")
-  principal_id                     = azurerm_kubernetes_cluster.main.identity[0].principal_id
-  role_definition_name             = "AcrPull"
-  scope                            = azurerm_container_registry.main.id
-  skip_service_principal_aad_check = true
-}
 
 resource "azurerm_container_registry_task" "build" {
   name                  = "build-test-image"
@@ -174,7 +164,7 @@ resource "azurerm_container_registry_task" "build" {
     source_type    = "Github"
     branch         = local.source_code_branch
     authentication {
-      token = var.github_pat
+      token      = var.github_pat
       token_type = "PAT"
     }
   }
@@ -183,8 +173,55 @@ resource "azurerm_container_registry_task" "build" {
     dockerfile_path      = "Dockerfile"
     context_path         = "${local.source_code_repository_url}#${local.source_code_branch}:build"
     context_access_token = var.github_pat
-    image_names          = ["helloworld:{{.Run.ID}}", "helloworld:latest"]
+    image_names          = ["${local.docker_image_name}:{{.Run.ID}}", "${local.docker_image_name}:latest"]
   }
+}
+
+resource "azurerm_container_registry_scope_map" "main" {
+  name                    = "${local.source_code_branch}-scope"
+  resource_group_name     = data.azurerm_resource_group.example.name
+  container_registry_name = azurerm_container_registry.main.name
+  actions = [
+    "repositories/${local.source_code_branch}/content/read",
+    "repositories/${local.source_code_branch}/content/write",
+    "repositories/${local.source_code_branch}/metadata/read",
+    "repositories/${local.source_code_branch}/metadata/write"
+  ]
+}
+
+resource "azurerm_container_registry_token" "primary" {
+  name                    = "${local.source_code_branch}-reg-token"
+  resource_group_name     = data.azurerm_resource_group.example.name
+  scope_map_id            = azurerm_container_registry_scope_map.main.id
+  container_registry_name = azurerm_container_registry.main.name
+}
+
+resource "time_offset" "password_validity_time" {
+  offset_days = 30
+
+  lifecycle {
+    replace_triggered_by = [ null_resource.always_run ]
+  }
+}
+
+resource "azurerm_container_registry_token_password" "primary" {
+  container_registry_token_id = azurerm_container_registry_token.primary.id
+  password1 {
+    expiry = time_offset.password_validity_time.rfc3339
+  }
+}
+
+resource "azurerm_role_assignment" "kubelet-acrpull" {
+  // This role assignment 'connects' AKS and ACR. It works by granting AcrPull role on the 
+  // Kubelet identity in Azure. For more information, refer to the page below:
+  // 
+  // https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration
+
+  name                             = uuidv5("url", "kubelet.principal.acrpull.roleassignment")
+  principal_id                     = azurerm_kubernetes_cluster.main.identity[0].principal_id
+  role_definition_name             = "AcrPull"
+  scope                            = azurerm_container_registry.main.id
+  skip_service_principal_aad_check = true
 }
 
 // ---------------------
@@ -243,30 +280,54 @@ resource "kubernetes_manifest" "secrets_provider_class_keyvault" {
   }
 }
 
+resource "kubernetes_secret" "image_pull_secret" {
+  metadata {
+    name      = "acr-pull-secret"
+    namespace = "default"
+  }
+  type = "kubernetes.io/dockerconfigjson"
 
-resource "kubernetes_deployment" "secrets-tester" {
+  data = {
+    ".dockerconfigjson" = jsonencode({
+      auths = {
+        "${azurerm_container_registry.main.login_server}" = {
+          "username" = azurerm_container_registry.main.name,
+          "password" = azurerm_container_registry_token_password.primary.password1.0.value
+          "email"    = null
+          "auth"     = base64encode("${azurerm_container_registry.main.name}:${azurerm_container_registry_token_password.primary.password1.0.value}")
+        }
+      }
+    })
+  }
+}
+
+resource "kubernetes_deployment" "deploy" {
   provider   = kubernetes
   depends_on = [kubernetes_manifest.secrets_provider_class_keyvault]
   metadata {
-    name      = "secrets-tester-deploy"
+    name      = "${local.kube_deployment_app_name}-deploy"
     namespace = "default"
   }
   spec {
     selector {
       match_labels = {
-        "app" = "secrets-tester"
+        "app" = local.kube_deployment_app_name
       }
     }
     template {
       metadata {
-        name      = "secrets-tester"
+        name      = local.kube_deployment_app_name
         namespace = "default"
-        labels    = { "app" = "secrets-tester" }
+        labels    = { "app" = local.kube_deployment_app_name }
       }
       spec {
+        image_pull_secrets {
+          name = kubernetes_secret.image_pull_secret.metadata.0.name
+        }
+
         container {
-          image   = "busybox"
-          name    = "busybox"
+          image   = "${azurerm_container_registry.main.login_server}/${local.docker_image_name}:latest"
+          name    = local.kube_deployment_app_name
           command = ["/bin/sh", "-c", "touch /tmp/healthy; sleep 30; rm -f /tmp/healthy; sleep 600"]
           volume_mount {
             name       = "secrets-store-inline"
