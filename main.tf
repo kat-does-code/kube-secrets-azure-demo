@@ -1,6 +1,8 @@
 locals {
-  container_registry_name = "${lower(substr(replace(data.azurerm_resource_group.example.name, "-", ""), 0, 30))}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
-  vm_size                 = "Standard_D2_v2"
+  source_code_repository_url = "https://github.com/kat-does-code/kube-secrets-azure-demo"
+  source_code_branch         = "main"
+  container_registry_name    = "${lower(substr(replace(data.azurerm_resource_group.example.name, "-", ""), 0, 30))}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
+  vm_size                    = "Standard_D2_v2"
 
   tags = merge({
     Environment = "Development"
@@ -159,15 +161,23 @@ resource "azurerm_role_assignment" "kubelet-acrpull" {
 }
 
 resource "azurerm_container_registry_task" "build" {
-  name = "build-test-image"
+  name                  = "build-test-image"
   container_registry_id = azurerm_container_registry.main.id
   platform {
     os = "Linux"
   }
 
+  source_trigger {
+    name           = "build-on-commit"
+    repository_url = local.source_code_repository_url
+    events         = ["commit"]
+    source_type    = "Github"
+    branch         = local.source_code_branch
+  }
+
   docker_step {
     dockerfile_path      = "Dockerfile"
-    context_path         = "https://github.com/kat-does-code/kube-secrets-azure-demo#main:build"
+    context_path         = "${local.source_code_repository_url}#${local.source_code_branch}:build"
     context_access_token = var.github_pat
     image_names          = ["helloworld:{{.Run.ID}}", "helloworld:latest"]
   }
@@ -208,12 +218,12 @@ resource "kubernetes_manifest" "secrets_provider_class_keyvault" {
     spec = {
       provider = "azure"
       parameters = {
-        usePodIdentity = "false"
-        useVMManagedIdentity = "true"                                                                                                     # Set to true for using managed identity
+        usePodIdentity         = "false"
+        useVMManagedIdentity   = "true"                                                                                   # Set to true for using managed identity
         userAssignedIdentityID = azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.client_id # Set the clientID of the user-assigned managed identity to use
-        keyvaultName = azurerm_key_vault.aks-mounted.name                                                                                 # Set to the name of your key vault
-        cloudName = ""                                                                                                                    # [OPTIONAL for Azure] if not provided, the Azure environment defaults to AzurePublicCloud
-        objects = <<EOT
+        keyvaultName           = azurerm_key_vault.aks-mounted.name                                                       # Set to the name of your key vault
+        cloudName              = ""                                                                                       # [OPTIONAL for Azure] if not provided, the Azure environment defaults to AzurePublicCloud
+        objects                = <<EOT
           array:
             - |
               objectName: ${azurerm_key_vault_secret.test-secret.name}
@@ -222,7 +232,7 @@ resource "kubernetes_manifest" "secrets_provider_class_keyvault" {
               objectName: ${azurerm_key_vault_secret.test-another-secret.name}
               objectType: "secret"
             EOT
-          
+
         tenantId = var.tenant_id # The tenant ID of the key vault
       }
     }
