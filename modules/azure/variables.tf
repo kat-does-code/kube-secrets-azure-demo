@@ -43,5 +43,9 @@ variable "github_pat" {
 variable "kube_cluster_name" {
   type = string
   description = "Name of the Kubernetes cluster to deploy"
-  default = "aks-example-1"
+}
+
+variable "docker_image_name" {
+  type = string
+  description = "Name of the docker image to deploy to the cluster."
 }
