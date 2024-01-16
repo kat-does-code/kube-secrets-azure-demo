@@ -42,10 +42,18 @@ variable "github_pat" {
 
 variable "kube_cluster_name" {
   type = string
-  description = "Name of the Kubernetes cluster to deploy"
+  description = "Name of the Kubernetes cluster to deploy."
+  default = "aks-example-1"
 }
 
 variable "docker_image_name" {
   type = string
   description = "Name of the docker image to deploy to the cluster."
+  default = "helloworld"
+}
+
+variable "mounted_key_vault_name" {
+  type = string
+  description = "Name of the Azure Key Vault to mount to the Kubernetes cluster."
+  default = "akv-mounted-keystore"
 }

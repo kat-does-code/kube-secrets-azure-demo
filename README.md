@@ -7,6 +7,7 @@ This project assumes you have a Service Principal and are authenticating with a 
 - 7f951dda-4ed3-4680-a7ca-43fe172d538d (AcrPull)
 - b86a8fe4-44ce-4948-aee5-eccb2c155cd7 (Key Vault Secrets Officer)
 - 4633458b-17de-408a-b874-0445c86b69e6 (Key Vault Secrets User)
+- f1a07417-d97a-45cb-824c-7a7467783830 (Managed Identity Operator)
 
 ## Github personal access token
 The container registry build task requires a Github PAT. Fine grained can be used. I've used a token with the following repository permissions:

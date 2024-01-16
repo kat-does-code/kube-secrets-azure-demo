@@ -28,9 +28,24 @@ resource "azurerm_user_assigned_identity" "kubelet" {
   // Create a single managed identity for Kubelet to use. AKS creates at least three more 
   // identities in a different resource group. For ease of access, we manage our own identity
   // for kubelet.
-  name = "${var.kube_cluster_name }-kubelet"
+  name = "id-${var.kube_cluster_name }-kubelet"
   resource_group_name = data.azurerm_resource_group.example.name
   location = data.azurerm_resource_group.example.location
+}
+
+resource "azurerm_user_assigned_identity" "control_plane" {
+  // Required if bringing your own Kubelet identity. 
+  name = "id-${var.kube_cluster_name }-cp"
+  resource_group_name = data.azurerm_resource_group.example.name
+  location = data.azurerm_resource_group.example.location  
+}
+
+resource "azurerm_role_assignment" "control_plane-managed_identity_operator" {
+  name                             = uuidv5("url", "kubelet.principal.managed_identity_operator.roleassignment")
+  principal_id                     = azurerm_user_assigned_identity.control_plane.principal_id
+  role_definition_name             = "Managed Identity Operator"
+  scope                            = azurerm_user_assigned_identity.kubelet.id
+  skip_service_principal_aad_check = true
 }
 
 resource "azurerm_kubernetes_cluster" "main" {
@@ -62,7 +77,7 @@ resource "azurerm_kubernetes_cluster" "main" {
 
   identity {
     type = "UserAssigned"
-    identity_ids = [ azurerm_user_assigned_identity.kubelet.id ]
+    identity_ids = [ azurerm_user_assigned_identity.control_plane.id ]
   }
 
   key_vault_secrets_provider {
@@ -104,7 +119,7 @@ resource "azurerm_key_vault" "aks-mounted" {
   //
   // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
 
-  name                      = "akv-mount-aks"
+  name                      = var.mounted_key_vault_name
   sku_name                  = "standard"
   enable_rbac_authorization = true
 
@@ -116,12 +131,14 @@ resource "azurerm_key_vault" "aks-mounted" {
 }
 
 resource "azurerm_key_vault_secret" "test-secret" {
+  depends_on = [ azurerm_role_assignment.terraform-secrets_officer ]
   name         = "test-secret"
   value        = "Test secret value with spaces"
   key_vault_id = azurerm_key_vault.aks-mounted.id
 }
 
 resource "azurerm_key_vault_secret" "test-another-secret" {
+  depends_on = [ azurerm_role_assignment.terraform-secrets_officer ]
   name         = "test-another-secret"
   value        = "Perhaps another secret just to make sure the yaml is correctly formatted."
   key_vault_id = azurerm_key_vault.aks-mounted.id
