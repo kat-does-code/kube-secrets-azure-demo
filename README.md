@@ -13,3 +13,6 @@ The container registry build task requires a Github PAT. Fine grained can be use
 
 - Read access to actions, administration, code, commit statuses, deployments, and metadata 
 - Read and Write access to repository hooks
+
+## ID? Client ID? Object ID? Principal ID?
+User assigned identity (including system managed identities) resources have multiple ID properties. The `ID` property of an identity resource contains what is essentially a path to the resource, compiled from the Subscription ID, Resource Group name and the resource (identity) name. The `Client ID` and `Object ID` (also known as `Principal ID`) properties contain a GUID which each refers to separate properties. A Client ID for a service principal may refer to an App Registration (or `AppId` in Microsoft Graph), whereas an Object/Principal ID refers to Azure AD.

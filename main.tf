@@ -5,6 +5,7 @@ locals {
   container_registry_name    = "${lower(substr(replace(data.azurerm_resource_group.example.name, "-", ""), 0, 30))}${random_string.acr_name_postfix.result}" // Generate a unique name related to the resource group name
   vm_size                    = "Standard_D2_v2"
   kube_deployment_app_name  = "secrets-tester"
+  kube_cluster_name = "aks-example-1"
 
   tags = merge({
     Environment = "Development"
@@ -25,6 +26,15 @@ resource "random_string" "acr_name_postfix" {
 // ------------------
 // Kubernetes Cluster
 // ------------------
+resource "azurerm_user_assigned_identity" "kubelet" {
+  // Create a single managed identity for Kubelet to use. AKS creates at least three more 
+  // identities in a different resource group. For ease of access, we manage our own identity
+  // for kubelet.
+  name = "${local.kube_cluster_name }-kubelet"
+  resource_group_name = data.azurerm_resource_group.example.name
+  location = data.azurerm_resource_group.example.location
+}
+
 resource "azurerm_kubernetes_cluster" "main" {
   // Any and all identities used for managing the cluster and its components will be automatically
   // created by Azure. Role based access control is enabled, so we can control each identity's 
@@ -33,7 +43,7 @@ resource "azurerm_kubernetes_cluster" "main" {
   // 
   // https://learn.microsoft.com/en-us/azure/aks/use-managed-identity
 
-  name                = "aks-example-1"
+  name                = local.kube_cluster_name 
   location            = data.azurerm_resource_group.example.location
   resource_group_name = data.azurerm_resource_group.example.name
   dns_prefix          = "aks-1"
@@ -53,12 +63,20 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   identity {
-    type = "SystemAssigned"
+    type = "UserAssigned"
+    identity_ids = [ azurerm_user_assigned_identity.kubelet.id ]
   }
 
   key_vault_secrets_provider {
+    // Creates a key_vault_secrets_provider managed identity
     secret_rotation_enabled  = true
     secret_rotation_interval = "2m"
+  }
+
+  kubelet_identity {
+    client_id = azurerm_user_assigned_identity.kubelet.client_id
+    object_id =  azurerm_user_assigned_identity.kubelet.principal_id
+    user_assigned_identity_id =  azurerm_user_assigned_identity.kubelet.id
   }
 
   api_server_access_profile {
@@ -83,7 +101,8 @@ resource "azurerm_kubernetes_cluster_node_pool" "user-pool" {
 // ---------
 resource "azurerm_key_vault" "aks-mounted" {
   // This key vault will be mounted to our AKS cluster. We'll mount this using Secrets Store 
-  // CSI drivers. More information can be found on the following page:
+  // CSI drivers. The key vault is accessed with a key_vault_secrets_provider managed identity,
+  // which is created by AKS. More information can be found on the following page:
   //
   // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
 
@@ -108,18 +127,6 @@ resource "azurerm_key_vault_secret" "test-another-secret" {
   name         = "test-another-secret"
   value        = "Perhaps another secret just to make sure the yaml is correctly formatted."
   key_vault_id = azurerm_key_vault.aks-mounted.id
-}
-
-resource "azurerm_role_assignment" "kubelet-secrets_user" {
-  // The Azure kubelet identity is granted access to the specified key vault and can read its secrets. 
-  //
-  // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
-
-  name                             = uuidv5("url", "kubelet.principal.secrets_user.roleassignment")
-  principal_id                     = azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.object_id
-  role_definition_name             = "Key Vault Secrets User"
-  scope                            = azurerm_key_vault.aks-mounted.id
-  skip_service_principal_aad_check = true
 }
 
 resource "azurerm_role_assignment" "terraform-secrets_officer" {
@@ -151,6 +158,8 @@ resource "azurerm_container_registry" "main" {
 
 
 resource "azurerm_container_registry_task" "build" {
+  // We set up a task that ensures docker images are built and pushed to the container registry
+  // when a new commit is pushed to Github.
   name                  = "build-test-image"
   container_registry_id = azurerm_container_registry.main.id
   platform {
@@ -206,13 +215,13 @@ resource "azurerm_container_registry_token_password" "primary" {
 }
 
 resource "azurerm_role_assignment" "kubelet-acrpull" {
-  // This role assignment 'connects' AKS and ACR. It works by granting AcrPull role on the 
-  // Kubelet identity in Azure. For more information, refer to the page below:
+  // This role assignment 'connects' AKS and ACR. All it does is grant the 'AcrPull' role on the
+  // AKS Kubelet identity in Azure. For more information, refer to the page below:
   // 
   // https://learn.microsoft.com/en-us/azure/aks/cluster-container-registry-integration
 
   name                             = uuidv5("url", "kubelet.principal.acrpull.roleassignment")
-  principal_id                     = // Get from *-nodes resource group (-agentpool identity)
+  principal_id                     = azurerm_user_assigned_identity.kubelet.principal_id
   role_definition_name             = "AcrPull"
   scope                            = azurerm_container_registry.main.id
   skip_service_principal_aad_check = true
@@ -225,15 +234,6 @@ provider "kubernetes" {
   experiments {
     manifest_resource = true
   }
-  host                   = azurerm_kubernetes_cluster.main.kube_admin_config.0.host
-  client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key)
-  client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate)
-  cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.cluster_ca_certificate)
-  username               = azurerm_kubernetes_cluster.main.kube_admin_config.0.username
-  password               = azurerm_kubernetes_cluster.main.kube_admin_config.0.password
-}
-
-provider "kubectl" {
   host                   = azurerm_kubernetes_cluster.main.kube_admin_config.0.host
   client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_key)
   client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_admin_config.0.client_certificate)
