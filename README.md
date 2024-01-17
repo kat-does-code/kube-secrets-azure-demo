@@ -1,5 +1,23 @@
 # kube-secrets-azure-demo
-Showcases Kubernetes cluster deployment in Azure using least privilege principle and secure secrets storage.
+Showcases Kubernetes cluster deployment in Azure using least privilege principle and secure secrets storage. Mounts an Azure Key Vault and connects an Azure Container Registry.
+
+## Deployment
+Since the `hashicorp/kubernetes` terraform provider relies on a pre-existing valid credential set, this project needs to be deployed in two stages. You can do this as follows (documented [here](https://github.com/hashicorp/terraform-provider-kubernetes/blob/main/_examples/aks/README.md)).
+
+1. (Optional) Start by creating your `terraform.tfvars` file and filling out the variables and secrets.
+2. Initialize your terraform environment.
+   ```bash
+   terraform init```
+2. Deploy the _azure_ module first, using the command below. You may be met with a warning message `Warning: Resource targeting is in effect`.
+
+   ```bash
+   terraform apply -target=module.azure
+   ```
+3. Upon successful deployment, deploy the kubernetes module (and the rest).
+
+   ```bash
+   terraform apply```
+
 
 ## Azure authentication & RBAC
 This project assumes you have a Service Principal and are authenticating with a Client ID and Secret. Service Principle must be able to deploy resources in an **existing** Resource Group. With the recent RBAC update, it is possible to limit the number of assignable roles. The RBAC roles used in this project are:
@@ -7,6 +25,7 @@ This project assumes you have a Service Principal and are authenticating with a 
 - 7f951dda-4ed3-4680-a7ca-43fe172d538d (AcrPull)
 - b86a8fe4-44ce-4948-aee5-eccb2c155cd7 (Key Vault Secrets Officer)
 - 4633458b-17de-408a-b874-0445c86b69e6 (Key Vault Secrets User)
+- f1a07417-d97a-45cb-824c-7a7467783830 (Managed Identity Operator)
 
 ## Github personal access token
 The container registry build task requires a Github PAT. Fine grained can be used. I've used a token with the following repository permissions:
