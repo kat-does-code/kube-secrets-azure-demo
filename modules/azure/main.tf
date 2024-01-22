@@ -92,10 +92,6 @@ resource "azurerm_kubernetes_cluster" "main" {
     user_assigned_identity_id =  azurerm_user_assigned_identity.kubelet.id
   }
 
-  api_server_access_profile {
-    authorized_ip_ranges = [var.kube_api_server_allowed_ip]
-  }
-
   tags = local.tags
 }
 
@@ -157,7 +153,7 @@ resource "azurerm_role_assignment" "terraform-secrets_officer" {
 }
 
 resource "azurerm_role_assignment" "secrets_provider-secret_user" {
-  // The service principal for terraform is granted access to the specified key vault and can read+write secrets. 
+  // The service principal for the Kubernetes Cluster's secret provider is granted access to the specified key vault and can read secrets. 
   //
   // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
 
@@ -214,6 +210,7 @@ resource "azurerm_container_registry_task" "build" {
 }
 
 resource "azurerm_container_registry_scope_map" "main" {
+  // We can set a scope map to limit privileges on specific repositories in the container registry
   name                    = "${local.source_code_branch}-scope"
   resource_group_name     = data.azurerm_resource_group.example.name
   container_registry_name = azurerm_container_registry.main.name

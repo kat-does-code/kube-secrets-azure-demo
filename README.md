@@ -37,3 +37,6 @@ The container registry build task requires a Github PAT. Fine grained can be use
 
 ## ID? Client ID? Object ID? Principal ID?
 User assigned identity (including system managed identities) resources have multiple ID properties. The `ID` property of an identity resource contains what is essentially a path to the resource, compiled from the Subscription ID, Resource Group name and the resource (identity) name. The `Client ID` and `Object ID` (also known as `Principal ID`) properties contain a GUID which each refers to separate properties. A Client ID for a service principal may refer to an App Registration (or `AppId` in Microsoft Graph), whereas an Object/Principal ID refers to Azure AD.
+
+## IP Whitelisting
+The Kubernetes API server by default is exposed to the internet. While authentication with client certificates is secure, you may want to restrict direct access to the API server completely. You may set a range of allowed IP addresses that may access your cluster. Do this by setting `authorized_ip_ranges` in the [`azurerm_kubernetes_cluster.api_server_access_profile`](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/kubernetes_cluster#api_server_access_profile) block.
