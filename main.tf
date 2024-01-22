@@ -14,7 +14,6 @@ module "azure" {
   subscription_id     = var.subscription_id
   resource_group_name = var.resource_group_name
 
-  kube_api_server_allowed_ip = var.kube_api_server_allowed_ip
   kube_cluster_name          = var.kube_cluster_name
 
   github_pat = var.github_pat

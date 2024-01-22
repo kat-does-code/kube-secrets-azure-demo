@@ -41,7 +41,7 @@ resource "azurerm_user_assigned_identity" "control_plane" {
 }
 
 resource "azurerm_role_assignment" "control_plane-managed_identity_operator" {
-  name                             = uuidv5("url", "kubelet.principal.managed_identity_operator.roleassignment")
+  name                             = uuidv5("url", "${azurerm_user_assigned_identity.control_plane.principal_id}.principal.managed_identity_operator.roleassignment")
   principal_id                     = azurerm_user_assigned_identity.control_plane.principal_id
   role_definition_name             = "Managed Identity Operator"
   scope                            = azurerm_user_assigned_identity.kubelet.id
@@ -90,10 +90,6 @@ resource "azurerm_kubernetes_cluster" "main" {
     client_id = azurerm_user_assigned_identity.kubelet.client_id
     object_id =  azurerm_user_assigned_identity.kubelet.principal_id
     user_assigned_identity_id =  azurerm_user_assigned_identity.kubelet.id
-  }
-
-  api_server_access_profile {
-    authorized_ip_ranges = [var.kube_api_server_allowed_ip]
   }
 
   tags = local.tags
@@ -149,9 +145,21 @@ resource "azurerm_role_assignment" "terraform-secrets_officer" {
   //
   // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
 
-  name                             = uuidv5("url", "terraform.principal.secrets_user.roleassignment")
+  name                             = uuidv5("url", "${var.principal_id}.principal.secrets_user.roleassignment")
   principal_id                     = var.principal_id
   role_definition_name             = "Key Vault Secrets Officer"
+  scope                            = azurerm_key_vault.aks-mounted.id
+  skip_service_principal_aad_check = true
+}
+
+resource "azurerm_role_assignment" "secrets_provider-secret_user" {
+  // The service principal for the Kubernetes Cluster's secret provider is granted access to the specified key vault and can read secrets. 
+  //
+  // https://learn.microsoft.com/en-us/azure/aks/csi-secrets-store-driver
+
+  name                             = uuidv5("url", "${azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.object_id}.principal.secrets_user.roleassignment")
+  principal_id                     = azurerm_kubernetes_cluster.main.key_vault_secrets_provider.0.secret_identity.0.object_id
+  role_definition_name             = "Key Vault Secrets User"
   scope                            = azurerm_key_vault.aks-mounted.id
   skip_service_principal_aad_check = true
 }
@@ -202,12 +210,13 @@ resource "azurerm_container_registry_task" "build" {
 }
 
 resource "azurerm_container_registry_scope_map" "main" {
+  // We can set a scope map to limit privileges on specific repositories in the container registry
   name                    = "${local.source_code_branch}-scope"
   resource_group_name     = data.azurerm_resource_group.example.name
   container_registry_name = azurerm_container_registry.main.name
   actions = [
-    "repositories/${local.source_code_branch}/content/read",
-    "repositories/${local.source_code_branch}/metadata/read"
+    "repositories/${local.docker_image_name}/content/read",
+    "repositories/${local.docker_image_name}/metadata/read"
   ]
 }
 
