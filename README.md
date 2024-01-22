@@ -7,17 +7,19 @@ Since the `hashicorp/kubernetes` terraform provider relies on a pre-existing val
 1. (Optional) Start by creating your `terraform.tfvars` file and filling out the variables and secrets.
 2. Initialize your terraform environment.
    ```bash
-   terraform init```
+   terraform init
+
 2. Deploy the _azure_ module first, using the command below. You may be met with a warning message `Warning: Resource targeting is in effect`.
 
    ```bash
    terraform apply -target=module.azure
-   ```
+   
 3. Upon successful deployment, deploy the kubernetes module (and the rest).
 
    ```bash
-   terraform apply```
+   terraform apply
 
+4. To access your newly created cluster and interact with it, you will need an `Azure Kubernetes Service RBAC` role assignment.
 
 ## Azure authentication & RBAC
 This project assumes you have a Service Principal and are authenticating with a Client ID and Secret. Service Principle must be able to deploy resources in an **existing** Resource Group. With the recent RBAC update, it is possible to limit the number of assignable roles. The RBAC roles used in this project are:
